@@ -1,411 +1,410 @@
+# Raj Live OI Dashboard
+# Final Formula: DIFFERENCE = PUT OI - CALL OI
+
+import time
+import json
+import os
+import requests
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-import requests, random, time, os
-from datetime import datetime, date
-from dotenv import load_dotenv
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-load_dotenv()
+st.set_page_config(page_title="Raj Live OI Dashboard", layout="wide")
 
-API_KEY = os.getenv("DHAN_CLIENT_ID", "").strip()
-ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
+BASE_URL = "https://api.dhan.co/v2"
+AUTO_SECONDS = 120
+API_GAP_SECONDS = 3.5
+LOGIN_FILE = "dhan_login.json"
 
-st.set_page_config(page_title="Live OI Dashboard", layout="wide")
-st.title("Live OI Analysis Dashboard")
-
-INDEX = {
-    "NIFTY": {"scrip": 13, "seg": "IDX_I", "step": 50, "atm": 23600},
-    "BANK NIFTY": {"scrip": 25, "seg": "IDX_I", "step": 100, "atm": 51000},
-    "SENSEX": {"scrip": 51, "seg": "IDX_I", "step": 100, "atm": 77500},
+INDICES = {
+    "NIFTY": {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"},
+    "BANK NIFTY": {"UnderlyingScrip": 25, "UnderlyingSeg": "IDX_I"},
+    "SENSEX": {"UnderlyingScrip": 51, "UnderlyingSeg": "IDX_I"},
 }
 
+st.markdown("""
+<style>
+.block-container {padding-top: 0.6rem; padding-bottom: 0.3rem;}
+.title {font-size: 28px; font-weight: 800; margin-bottom: 6px;}
+.box {background: #f5f7fa; padding: 6px; border-radius: 8px; margin: 4px 0; font-size: 13px;}
+.index-title {font-size: 20px; font-weight: 800; margin-top: 6px; margin-bottom: 3px;}
+
+.wrap {
+    width: 100%;
+    height: 185px;
+    overflow-x: auto;
+    overflow-y: auto;
+    border: 1px solid #999;
+    border-radius: 8px;
+    display: block;
+    margin-bottom: 6px;
+}
+
+table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: max-content;
+    min-width: 100%;
+    text-align: center;
+    font-size: 13px;
+}
+
+th, td {
+    border: 1px solid #999;
+    padding: 5px;
+    min-width: 92px;
+    background: white;
+}
+
+td {
+    font-size: 13px;
+}
+
+th {
+    position: sticky;
+    z-index: 5;
+    font-weight: 800;
+}
+
+.h1 th {
+    top: 0;
+    background: #e8eef7;
+    z-index: 8;
+    font-size: 16px;
+    height: 34px;
+}
+
+.h2 th {
+    top: 34px;
+    background: #fff5cc;
+    z-index: 7;
+    font-size: 14px;
+    height: 32px;
+}
+
+.time {
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 6;
+    font-weight: 700;
+    min-width: 76px;
+}
+
+.htime {
+    position: sticky!important;
+    left: 0;
+    z-index: 20!important;
+    min-width: 76px;
+}
+
+.sep {border-left: 4px solid #111!important;}
+.up {background: #d9f7d9!important; font-weight: 700;}
+.down {background: #ffd6d6!important; font-weight: 700;}
+.same {background: #d9f0ff!important; font-weight: 700;}
+.diff {background: #fff2b3!important; font-weight: 800;}
+.pct {display: block; font-size: 10px; color: #444; margin-top: 2px;}
+.stButton button {height: 36px;}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="title">📊 Raj Live OI Dashboard</div>', unsafe_allow_html=True)
+
+def load_login():
+    try:
+        if os.path.exists(LOGIN_FILE):
+            with open(LOGIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("client_id", ""), data.get("access_token", "")
+    except:
+        pass
+    return "", ""
+
+def save_login(client_id, access_token):
+    with open(LOGIN_FILE, "w", encoding="utf-8") as f:
+        json.dump({"client_id": client_id.strip(), "access_token": access_token.strip()}, f)
+
+def clear_login_file():
+    try:
+        if os.path.exists(LOGIN_FILE):
+            os.remove(LOGIN_FILE)
+    except:
+        pass
+
+if "snapshots" not in st.session_state:
+    st.session_state.snapshots = {}
+if "last_auto" not in st.session_state:
+    st.session_state.last_auto = 0
+if "last_api_time" not in st.session_state:
+    st.session_state.last_api_time = 0
+if "expiry_cache" not in st.session_state:
+    st.session_state.expiry_cache = {}
+if "login_loaded" not in st.session_state:
+    cid, tok = load_login()
+    st.session_state.saved_client_id = cid
+    st.session_state.saved_access_token = tok
+    st.session_state.login_loaded = True
+if "saved_client_id" not in st.session_state:
+    st.session_state.saved_client_id = ""
+if "saved_access_token" not in st.session_state:
+    st.session_state.saved_access_token = ""
+
+st.sidebar.header("Dhan Login")
+
+client_id_input = st.sidebar.text_input("Dhan Client ID", value=st.session_state.saved_client_id, type="password")
+access_token_input = st.sidebar.text_input("Dhan Access Token", value=st.session_state.saved_access_token, type="password")
+
+if st.sidebar.button("🔐 Login Save", use_container_width=True):
+    st.session_state.saved_client_id = client_id_input.strip()
+    st.session_state.saved_access_token = access_token_input.strip()
+    save_login(st.session_state.saved_client_id, st.session_state.saved_access_token)
+    st.sidebar.success("Login laptop में save हो गया।")
+    st.rerun()
+
+if st.sidebar.button("🚪 Clear Login", use_container_width=True):
+    st.session_state.saved_client_id = ""
+    st.session_state.saved_access_token = ""
+    st.session_state.expiry_cache = {}
+    clear_login_file()
+    st.sidebar.success("Login clear हो गया।")
+    st.rerun()
+
+client_id = st.session_state.saved_client_id or client_id_input.strip()
+access_token = st.session_state.saved_access_token or access_token_input.strip()
+
 st.sidebar.header("Settings")
-
-show_nifty = st.sidebar.checkbox("NIFTY", True)
-show_bank = st.sidebar.checkbox("BANK NIFTY", True)
-show_sensex = st.sidebar.checkbox("SENSEX", True)
-
-atm_range = st.sidebar.selectbox("ATM Range", list(range(1, 11)), index=2)
-demo_mode = st.sidebar.checkbox("Demo Data", False)
-auto_refresh = st.sidebar.checkbox("Auto Refresh 2 Minute", False)
-show_raw = st.sidebar.checkbox("Show Raw Dhan Response", True)
-
-available = []
-if show_nifty:
-    available.append("NIFTY")
-if show_bank:
-    available.append("BANK NIFTY")
-if show_sensex:
-    available.append("SENSEX")
-
-st.sidebar.subheader("Display Order")
-
-pos1 = st.sidebar.selectbox("1st Position", ["None"] + available, index=1 if len(available) >= 1 else 0)
-pos2 = st.sidebar.selectbox("2nd Position", ["None"] + available, index=2 if len(available) >= 2 else 0)
-pos3 = st.sidebar.selectbox("3rd Position", ["None"] + available, index=3 if len(available) >= 3 else 0)
-
-selected = []
-for x in [pos1, pos2, pos3]:
-    if x != "None" and x not in selected:
-        selected.append(x)
-
-if st.sidebar.button("Add New Row"):
-    st.session_state.add_row = True
-
-if st.sidebar.button("Clear Data"):
-    st.session_state.history = {}
-    st.session_state.raw_response = {}
-
-if "history" not in st.session_state:
-    st.session_state.history = {}
-
-if "raw_response" not in st.session_state:
-    st.session_state.raw_response = {}
-
-if "add_row" not in st.session_state:
-    st.session_state.add_row = True
+selected_indices = st.sidebar.multiselect("Index चुनें", list(INDICES.keys()), default=["NIFTY"])
+atm_range = st.sidebar.selectbox("ATM ± Range", list(range(1, 11)), index=2)
+auto_add = st.sidebar.checkbox("Auto Add Row हर 2 मिनट", value=False)
+st.sidebar.caption("Formula: DIFFERENCE = PUT OI - CALL OI")
 
 def headers():
     return {
-        "access-token": ACCESS_TOKEN,
-        "client-id": API_KEY,
-        "Accept": "application/json",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "access-token": access_token.strip(),
+        "client-id": client_id.strip(),
     }
 
-def is_weekend():
-    return date.today().weekday() in [5, 6]
+def safe_wait():
+    now = time.time()
+    gap = now - st.session_state.last_api_time
+    if gap < API_GAP_SECONDS:
+        time.sleep(API_GAP_SECONDS - gap)
 
-def color_box(now, prev):
-    if prev is None:
-        return "#ffffff"
-    if now > prev:
-        return "#90EE90"
-    if now < prev:
-        return "#ff7f7f"
-    return "#87CEEB"
+def post_api(path, payload):
+    safe_wait()
+    r = requests.post(BASE_URL + path, headers=headers(), json=payload, timeout=20)
+    st.session_state.last_api_time = time.time()
+    if r.status_code == 429:
+        raise Exception("HTTP 429: Dhan API limit लगी है। 2-3 मिनट बाद फिर कोशिश करें।")
+    if r.status_code != 200:
+        raise Exception(f"HTTP {r.status_code}: {r.text[:500]}")
+    return r.json()
 
-def get_oi(option_data):
-    if not isinstance(option_data, dict):
-        return 0
-
-    for key in ["oi", "OI", "open_interest", "openInterest", "openInterestQty"]:
-        val = option_data.get(key)
-        if val is not None:
-            try:
-                return int(float(val))
-            except:
-                return 0
-
-    return 0
-
-def nearest_expiry(index_name):
-    cfg = INDEX[index_name]
-
-    url = "https://api.dhan.co/v2/optionchain/expirylist"
-
-    payload = {
-        "UnderlyingScrip": cfg["scrip"],
-        "UnderlyingSeg": cfg["seg"]
-    }
-
-    r = requests.post(url, headers=headers(), json=payload, timeout=15)
-    r.raise_for_status()
-
-    data = r.json().get("data", [])
-
-    if isinstance(data, list) and len(data) > 0:
-        return data[0]
-
-    raise Exception("Expiry नहीं मिली")
-
-def get_strikes(index_name, atm):
-    step = INDEX[index_name]["step"]
-    return [int(atm + i * step) for i in range(-atm_range, atm_range + 1)]
-
-def find_strike_data(oc, strike):
-    if not isinstance(oc, dict):
-        return {}
-
-    possible_keys = [
-        str(strike),
-        str(float(strike)),
-        f"{strike}.0",
-        f"{strike}.00",
-        f"{strike}.000000"
-    ]
-
-    for key in possible_keys:
-        if key in oc:
-            return oc[key]
-
-    for key, value in oc.items():
-        try:
-            if int(float(key)) == int(strike):
-                return value
-        except:
-            pass
-
-    return {}
-
-def get_ce_pe(strike_data):
-    if not isinstance(strike_data, dict):
-        return {}, {}
-
-    ce = (
-        strike_data.get("ce")
-        or strike_data.get("CE")
-        or strike_data.get("call")
-        or strike_data.get("CALL")
-        or {}
-    )
-
-    pe = (
-        strike_data.get("pe")
-        or strike_data.get("PE")
-        or strike_data.get("put")
-        or strike_data.get("PUT")
-        or {}
-    )
-
-    return ce, pe
-
-def demo_row(index_name):
-    atm = INDEX[index_name]["atm"]
-
-    row = {
-        "TIME": datetime.now().strftime("%H:%M:%S")
-    }
-
-    for strike in get_strikes(index_name, atm):
-        put = random.randint(10000, 90000)
-        call = random.randint(10000, 90000)
-
-        row[f"{strike}_put"] = put
-        row[f"{strike}_call"] = call
-        row[f"{strike}_dif"] = put - call
-
-    return row
-
-def live_row(index_name):
-    cfg = INDEX[index_name]
-    expiry = nearest_expiry(index_name)
-
-    url = "https://api.dhan.co/v2/optionchain"
-
-    payload = {
-        "UnderlyingScrip": cfg["scrip"],
-        "UnderlyingSeg": cfg["seg"],
-        "Expiry": expiry
-    }
-
-    r = requests.post(url, headers=headers(), json=payload, timeout=15)
-    r.raise_for_status()
-
-    raw = r.json()
-    st.session_state.raw_response[index_name] = raw
-
-    data = raw.get("data", {})
-
-    oc = data.get("oc", {}) or data.get("option_chain", {}) or data.get("optionChain", {})
-
-    last_price = (
-        data.get("last_price")
-        or data.get("lastPrice")
-        or data.get("underlying_price")
-        or data.get("underlyingPrice")
-        or cfg["atm"]
-    )
-
+def fmt(v):
     try:
-        atm = int(round(float(last_price) / cfg["step"]) * cfg["step"])
+        return f"{int(v):,}"
     except:
-        atm = cfg["atm"]
+        return "0"
 
-    INDEX[index_name]["atm"] = atm
+def pct(now, old):
+    if old is None or old == 0:
+        return ""
+    p = ((now - old) / abs(old)) * 100
+    sign = "+" if p > 0 else ""
+    return f"<span class='pct'>{sign}{p:.2f}%</span>"
 
-    row = {
-        "TIME": datetime.now().strftime("%H:%M:%S")
+def cls(now, old):
+    if old is None:
+        return ""
+    if now > old:
+        return "up"
+    if now < old:
+        return "down"
+    return "same"
+
+def ist_time():
+    return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
+
+def get_expiry(index_name):
+    if index_name in st.session_state.expiry_cache:
+        return st.session_state.expiry_cache[index_name]
+    cfg = INDICES[index_name]
+    data = post_api("/optionchain/expirylist", cfg)
+    expiries = data.get("data", [])
+    if not expiries:
+        raise Exception("Expiry list खाली आई।")
+    nearest_expiry = expiries[0]
+    st.session_state.expiry_cache[index_name] = nearest_expiry
+    return nearest_expiry
+
+def get_chain(index_name, expiry):
+    cfg = INDICES[index_name]
+    payload = {
+        "UnderlyingScrip": cfg["UnderlyingScrip"],
+        "UnderlyingSeg": cfg["UnderlyingSeg"],
+        "Expiry": expiry,
     }
+    return post_api("/optionchain", payload)
 
-    for strike in get_strikes(index_name, atm):
-        strike_data = find_strike_data(oc, strike)
-        ce, pe = get_ce_pe(strike_data)
+def parse_chain(raw):
+    data = raw.get("data", {})
+    spot = data.get("last_price")
+    oc = data.get("oc", {})
+    rows = []
+    for strike_key, val in oc.items():
+        try:
+            strike = float(strike_key)
+        except:
+            continue
+        ce = val.get("ce", {}) or {}
+        pe = val.get("pe", {}) or {}
+        call_oi = int(ce.get("oi", 0) or 0)
+        put_oi = int(pe.get("oi", 0) or 0)
+        rows.append({"strike": strike, "call": call_oi, "put": put_oi, "diff": put_oi - call_oi})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise Exception("Option chain data खाली आया।")
+    return df.sort_values("strike").reset_index(drop=True), spot
 
-        put = get_oi(pe)
-        call = get_oi(ce)
-
-        row[f"{strike}_put"] = put
-        row[f"{strike}_call"] = call
-        row[f"{strike}_dif"] = put - call
-
-    return row
-
-def add_data(index_name):
+def atm_strike(df, spot):
+    strikes = df["strike"].tolist()
     try:
-        if demo_mode:
-            row = demo_row(index_name)
-        else:
-            row = live_row(index_name)
+        spot = float(spot)
+        return min(strikes, key=lambda x: abs(x - spot))
+    except:
+        return strikes[len(strikes) // 2]
 
-    except Exception as e:
-        st.error(f"{index_name} error: {e}")
-        row = demo_row(index_name)
+def filter_range(df, atm):
+    strikes = sorted(df["strike"].unique().tolist())
+    atm = min(strikes, key=lambda x: abs(x - atm))
+    i = strikes.index(atm)
+    selected = strikes[max(0, i - atm_range): i + atm_range + 1]
+    return df[df["strike"].isin(selected)].copy()
 
-    if index_name not in st.session_state.history:
-        st.session_state.history[index_name] = []
+def make_snapshot(index_name):
+    expiry = get_expiry(index_name)
+    raw = get_chain(index_name, expiry)
+    df, spot = parse_chain(raw)
+    atm = atm_strike(df, spot)
+    df = filter_range(df, atm)
+    snap = {"time": ist_time(), "expiry": expiry, "spot": spot, "atm": atm, "strikes": {}}
+    for _, r in df.iterrows():
+        strike = int(r["strike"])
+        snap["strikes"][strike] = {
+            "call": int(r["call"]),
+            "put": int(r["put"]),
+            "diff": int(r["diff"]),
+        }
+    return snap
 
-    st.session_state.history[index_name].append(row)
+def add_rows(source="manual"):
+    errors = []
+    for index_name in selected_indices:
+        try:
+            snap = make_snapshot(index_name)
+            st.session_state.snapshots.setdefault(index_name, []).append(snap)
+        except Exception as e:
+            errors.append(f"{index_name}: {e}")
+    if errors:
+        st.error("Error:")
+        st.code("\\n".join(errors))
+    else:
+        st.success("Auto row add हो गई।" if source == "auto" else "New row add हो गई।")
 
-def make_table(index_name):
-    history = st.session_state.history.get(index_name, [])
+def render(index_name):
+    data = st.session_state.snapshots.get(index_name, [])
+    if not data:
+        st.info(f"{index_name}: अभी data नहीं है। Add New Row दबाइए।")
+        return
 
-    if not history:
-        return "<p>No data</p>"
+    latest = data[-1]
+    strikes = list(latest["strikes"].keys())
+    wrap_id = f"wrap_{index_name.replace(' ', '_')}"
+    bottom_id = f"bottom_{index_name.replace(' ', '_')}"
 
-    latest = history[-1]
+    st.markdown(f"<div class='index-title'>{index_name}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='box'><b>{index_name}</b> | Expiry: <b>{latest['expiry']}</b> | "
+        f"Spot: <b>{latest['spot']}</b> | ATM: <b>{int(latest['atm'])}</b> | "
+        f"Difference: <b>PUT - CALL</b></div>",
+        unsafe_allow_html=True
+    )
 
-    strike_list = sorted([
-        int(x.replace("_put", ""))
-        for x in latest.keys()
-        if x.endswith("_put")
-    ])
-
-    html = """
-    <style>
-    .table-box{
-        height:360px;
-        overflow-y:scroll;
-        overflow-x:auto;
-        border:1px solid #cccccc;
-    }
-
-    table{
-        border-collapse:separate;
-        border-spacing:0;
-        width:100%;
-        font-family:Arial;
-        font-size:14px;
-        text-align:center;
-    }
-
-    th,td{
-        border:1px solid #cccccc;
-        padding:8px;
-        white-space:nowrap;
-    }
-
-    th{
-        position:sticky;
-        z-index:10;
-    }
-
-    .top-head{
-        top:0;
-        background:#dbe8ff;
-        font-size:17px;
-        font-weight:bold;
-    }
-
-    .sub-head{
-        top:40px;
-        background:#f2f2f2;
-        font-weight:bold;
-    }
-
-    .time-head{
-        top:0;
-        background:#f5f5f5;
-        z-index:12;
-        border-right:4px solid black !important;
-    }
-
-    .time{
-        background:#f5f5f5;
-        font-weight:bold;
-        border-right:4px solid black !important;
-    }
-
-    .group-end{
-        border-right:4px solid black !important;
-    }
-    </style>
-
-    <div class="table-box">
-    <table>
-    <tr>
-    <th rowspan="2" class="time-head">TIME</th>
-    """
-
-    for strike in strike_list:
-        html += f"""
-        <th colspan="3" class="top-head group-end">
-        {strike}
-        </th>
-        """
-
-    html += "</tr><tr>"
-
-    for strike in strike_list:
-        html += """
-        <th class="sub-head">PUT OI</th>
-        <th class="sub-head">CALL OI</th>
-        <th class="sub-head group-end">DIFRENS</th>
-        """
-
+    html = f"<div class='wrap' id='{wrap_id}'><table>"
+    html += "<tr class='h1'><th class='htime'>Time</th>"
+    for s in strikes:
+        html += f"<th colspan='3' class='sep'>Strike {s}</th>"
     html += "</tr>"
 
-    for i, row in enumerate(history):
-        prev = history[i - 1] if i > 0 else None
+    html += "<tr class='h2'><th class='htime'></th>"
+    for _ in strikes:
+        html += "<th class='sep'>CALL OI</th><th>PUT OI</th><th class='diff'>DIFFERENCE<br><small>PUT-CALL</small></th>"
+    html += "</tr>"
 
-        html += f"""
-        <tr>
-        <td class="time">{row['TIME']}</td>
-        """
-
-        for strike in strike_list:
-            put = row.get(f"{strike}_put", 0)
-            call = row.get(f"{strike}_call", 0)
-            dif = row.get(f"{strike}_dif", 0)
-
-            prev_put = prev.get(f"{strike}_put") if prev else None
-            prev_call = prev.get(f"{strike}_call") if prev else None
-            prev_dif = prev.get(f"{strike}_dif") if prev else None
-
-            html += f"""
-            <td style="background:{color_box(put, prev_put)}">{put}</td>
-            <td style="background:{color_box(call, prev_call)}">{call}</td>
-            <td class="group-end" style="background:{color_box(dif, prev_dif)}">{dif}</td>
-            """
-
+    for i, snap in enumerate(data):
+        prev = data[i - 1] if i > 0 else None
+        html += f"<tr><td class='time'>{snap['time']}</td>"
+        for s in strikes:
+            nowv = snap["strikes"].get(s, {"call": 0, "put": 0, "diff": 0})
+            oldv = prev["strikes"].get(s) if prev else None
+            old_call = oldv["call"] if oldv else None
+            old_put = oldv["put"] if oldv else None
+            old_diff = oldv["diff"] if oldv else None
+            html += f"<td class='sep {cls(nowv['call'], old_call)}'>{fmt(nowv['call'])}{pct(nowv['call'], old_call)}</td>"
+            html += f"<td class='{cls(nowv['put'], old_put)}'>{fmt(nowv['put'])}{pct(nowv['put'], old_put)}</td>"
+            html += f"<td class='diff {cls(nowv['diff'], old_diff)}'>{fmt(nowv['diff'])}{pct(nowv['diff'], old_diff)}</td>"
         html += "</tr>"
 
+    html += f"<tr id='{bottom_id}'><td style='height:1px;padding:0;border:0;'></td></tr>"
     html += "</table></div>"
+    st.markdown(html, unsafe_allow_html=True)
 
-    return html
+if not client_id.strip() or not access_token.strip():
+    st.warning("पहले Dhan Client ID और Access Token डालिए।")
+    st.stop()
 
-if st.session_state.add_row:
-    for index_name in selected:
-        add_data(index_name)
+if not selected_indices:
+    st.warning("कम से कम 1 index चुनिए।")
+    st.stop()
 
-    st.session_state.add_row = False
+c1, c2, c3 = st.columns([1, 1, 2])
+with c1:
+    if st.button("➕ Add New Row", use_container_width=True):
+        add_rows("manual")
+with c2:
+    if st.button("🧹 Clear Data", use_container_width=True):
+        st.session_state.snapshots = {}
+        st.success("Data clear हो गया।")
+with c3:
+    st.caption("Auto ON करने पर हर 2 मिनट में row add होगी।")
 
-for index_name in selected:
-    st.subheader(index_name)
-    components.html(make_table(index_name), height=430, scrolling=False)
+if auto_add:
+    now = time.time()
+    if now - st.session_state.last_auto >= AUTO_SECONDS:
+        st.session_state.last_auto = now
+        add_rows("auto")
+    st.markdown(f"<meta http-equiv='refresh' content='{AUTO_SECONDS}'>", unsafe_allow_html=True)
 
-if demo_mode:
-    st.warning("Demo Mode ON")
-else:
-    st.success("Live Dhan API Running")
+for idx in selected_indices:
+    render(idx)
 
-if show_raw and not demo_mode:
-    st.subheader("Raw Dhan Response Debug")
-    for key, value in st.session_state.raw_response.items():
-        with st.expander(f"{key} Raw Response"):
-            st.json(value)
-
-if auto_refresh:
-    if not is_weekend():
-        time.sleep(120)
-        st.session_state.add_row = True
-        st.rerun()
+components.html(
+    """
+    <script>
+    function scrollTablesToLatest() {
+        const doc = window.parent.document;
+        const wraps = doc.querySelectorAll('.wrap');
+        wraps.forEach(function(w) {
+            w.scrollTop = w.scrollHeight;
+        });
+    }
+    setTimeout(scrollTablesToLatest, 200);
+    setTimeout(scrollTablesToLatest, 600);
+    setTimeout(scrollTablesToLatest, 1200);
+    </script>
+    """,
+    height=0,
+)
