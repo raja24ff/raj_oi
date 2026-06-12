@@ -7,7 +7,6 @@ import os
 import requests
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -26,20 +25,20 @@ INDICES = {
 
 st.markdown("""
 <style>
-.block-container {padding-top: 0.6rem; padding-bottom: 0.3rem;}
-.title {font-size: 28px; font-weight: 800; margin-bottom: 6px;}
-.box {background: #f5f7fa; padding: 6px; border-radius: 8px; margin: 4px 0; font-size: 13px;}
-.index-title {font-size: 20px; font-weight: 800; margin-top: 6px; margin-bottom: 3px;}
+.block-container {padding-top: 0.45rem; padding-bottom: 0.25rem;}
+.title {font-size: 26px; font-weight: 800; margin-bottom: 4px;}
+.box {background: #f5f7fa; padding: 5px; border-radius: 8px; margin: 3px 0; font-size: 12px;}
+.index-title {font-size: 18px; font-weight: 800; margin-top: 5px; margin-bottom: 2px;}
 
 .wrap {
     width: 100%;
-    height: 185px;
+    height: 520px;
     overflow-x: auto;
     overflow-y: auto;
     border: 1px solid #999;
     border-radius: 8px;
     display: block;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
 
 table {
@@ -48,18 +47,21 @@ table {
     width: max-content;
     min-width: 100%;
     text-align: center;
-    font-size: 13px;
+    font-size: 11px;
 }
 
 th, td {
     border: 1px solid #999;
-    padding: 5px;
-    min-width: 92px;
+    padding: 3px 3px;
+    min-width: 62px;
+    max-width: 74px;
     background: white;
+    white-space: nowrap;
 }
 
 td {
-    font-size: 13px;
+    font-size: 11px;
+    line-height: 1.08;
 }
 
 th {
@@ -72,16 +74,16 @@ th {
     top: 0;
     background: #e8eef7;
     z-index: 8;
-    font-size: 16px;
-    height: 34px;
+    font-size: 14px;
+    height: 30px;
 }
 
 .h2 th {
-    top: 34px;
+    top: 30px;
     background: #fff5cc;
     z-index: 7;
-    font-size: 14px;
-    height: 32px;
+    font-size: 11px;
+    height: 30px;
 }
 
 .time {
@@ -90,23 +92,30 @@ th {
     background: white;
     z-index: 6;
     font-weight: 700;
-    min-width: 76px;
+    min-width: 64px!important;
+    max-width: 68px!important;
 }
 
 .htime {
     position: sticky!important;
     left: 0;
     z-index: 20!important;
-    min-width: 76px;
+    min-width: 64px!important;
+    max-width: 68px!important;
 }
 
 .sep {border-left: 4px solid #111!important;}
 .up {background: #d9f7d9!important; font-weight: 700;}
 .down {background: #ffd6d6!important; font-weight: 700;}
 .same {background: #d9f0ff!important; font-weight: 700;}
-.diff {background: #fff2b3!important; font-weight: 800;}
-.pct {display: block; font-size: 10px; color: #444; margin-top: 2px;}
-.stButton button {height: 36px;}
+
+.diff-head {background: #fff2b3!important; font-weight: 800;}
+.diff-up {background: #006400!important; color: white!important; font-weight: 900;}
+.diff-down {background: #8B0000!important; color: white!important; font-weight: 900;}
+.diff-same {background: #00008B!important; color: white!important; font-weight: 900;}
+
+.pct {display: block; font-size: 9px; color: inherit; margin-top: 1px;}
+.stButton button {height: 34px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,7 +214,21 @@ def post_api(path, payload):
 
 def fmt(v):
     try:
-        return f"{int(v):,}"
+        n = float(v)
+        sign = "-" if n < 0 else ""
+        n_abs = abs(n)
+
+        if n_abs >= 10000000:
+            val = n_abs / 10000000
+            txt = f"{val:.2f}".rstrip("0").rstrip(".")
+            return f"{sign}{txt} Cr"
+
+        if n_abs >= 100000:
+            val = n_abs / 100000
+            txt = f"{val:.2f}".rstrip("0").rstrip(".")
+            return f"{sign}{txt} L"
+
+        return f"{sign}{int(n_abs):,}"
     except:
         return "0"
 
@@ -224,6 +247,15 @@ def cls(now, old):
     if now < old:
         return "down"
     return "same"
+
+def diff_change_cls(now, old):
+    if old is None:
+        return "diff-same"
+    if now > old:
+        return "diff-up"
+    if now < old:
+        return "diff-down"
+    return "diff-same"
 
 def ist_time():
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
@@ -322,8 +354,6 @@ def render(index_name):
 
     latest = data[-1]
     strikes = list(latest["strikes"].keys())
-    wrap_id = f"wrap_{index_name.replace(' ', '_')}"
-    bottom_id = f"bottom_{index_name.replace(' ', '_')}"
 
     st.markdown(f"<div class='index-title'>{index_name}</div>", unsafe_allow_html=True)
     st.markdown(
@@ -333,7 +363,7 @@ def render(index_name):
         unsafe_allow_html=True
     )
 
-    html = f"<div class='wrap' id='{wrap_id}'><table>"
+    html = "<div class='wrap'><table>"
     html += "<tr class='h1'><th class='htime'>Time</th>"
     for s in strikes:
         html += f"<th colspan='3' class='sep'>Strike {s}</th>"
@@ -341,24 +371,28 @@ def render(index_name):
 
     html += "<tr class='h2'><th class='htime'></th>"
     for _ in strikes:
-        html += "<th class='sep'>CALL OI</th><th>PUT OI</th><th class='diff'>DIFFERENCE<br><small>PUT-CALL</small></th>"
+        html += "<th class='sep'>CALL OI</th><th>PUT OI</th><th class='diff-head'>DIFFERENCE<br><small>PUT-CALL</small></th>"
     html += "</tr>"
 
-    for i, snap in enumerate(data):
+    for i in range(len(data) - 1, -1, -1):
+        snap = data[i]
         prev = data[i - 1] if i > 0 else None
         html += f"<tr><td class='time'>{snap['time']}</td>"
+
         for s in strikes:
             nowv = snap["strikes"].get(s, {"call": 0, "put": 0, "diff": 0})
             oldv = prev["strikes"].get(s) if prev else None
+
             old_call = oldv["call"] if oldv else None
             old_put = oldv["put"] if oldv else None
             old_diff = oldv["diff"] if oldv else None
+
             html += f"<td class='sep {cls(nowv['call'], old_call)}'>{fmt(nowv['call'])}{pct(nowv['call'], old_call)}</td>"
             html += f"<td class='{cls(nowv['put'], old_put)}'>{fmt(nowv['put'])}{pct(nowv['put'], old_put)}</td>"
-            html += f"<td class='diff {cls(nowv['diff'], old_diff)}'>{fmt(nowv['diff'])}{pct(nowv['diff'], old_diff)}</td>"
+            html += f"<td class='{diff_change_cls(nowv['diff'], old_diff)}'>{fmt(nowv['diff'])}{pct(nowv['diff'], old_diff)}</td>"
+
         html += "</tr>"
 
-    html += f"<tr id='{bottom_id}'><td style='height:1px;padding:0;border:0;'></td></tr>"
     html += "</table></div>"
     st.markdown(html, unsafe_allow_html=True)
 
@@ -390,21 +424,3 @@ if auto_add:
 
 for idx in selected_indices:
     render(idx)
-
-components.html(
-    """
-    <script>
-    function scrollTablesToLatest() {
-        const doc = window.parent.document;
-        const wraps = doc.querySelectorAll('.wrap');
-        wraps.forEach(function(w) {
-            w.scrollTop = w.scrollHeight;
-        });
-    }
-    setTimeout(scrollTablesToLatest, 200);
-    setTimeout(scrollTablesToLatest, 600);
-    setTimeout(scrollTablesToLatest, 1200);
-    </script>
-    """,
-    height=0,
-)
