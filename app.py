@@ -72,7 +72,7 @@ th {
 
 .h1 th {
     top: 0;
-    background: #e8eef7;
+    background: #d9d9d9;
     z-index: 8;
     font-size: 14px;
     height: 30px;
@@ -80,7 +80,7 @@ th {
 
 .h2 th {
     top: 30px;
-    background: #fff5cc;
+    background: #d9d9d9;
     z-index: 7;
     font-size: 11px;
     height: 30px;
@@ -109,7 +109,9 @@ th {
 .down {background: #ffd6d6!important; font-weight: 700;}
 .same {background: #d9f0ff!important; font-weight: 700;}
 
-.diff-head {background: #fff2b3!important; font-weight: 800;}
+.diff-head {background: #d9d9d9!important; font-weight: 800;}
+.atm-head {background: #ffa500!important; color: #000!important; font-weight: 900!important;}
+
 .diff-up {background: #006400!important; color: white!important; font-weight: 900;}
 .diff-down {background: #8B0000!important; color: white!important; font-weight: 900;}
 .diff-same {background: #00008B!important; color: white!important; font-weight: 900;}
@@ -354,6 +356,7 @@ def render(index_name):
 
     latest = data[-1]
     strikes = list(latest["strikes"].keys())
+    atm_int = int(latest["atm"])
 
     st.markdown(f"<div class='index-title'>{index_name}</div>", unsafe_allow_html=True)
     st.markdown(
@@ -365,13 +368,18 @@ def render(index_name):
 
     html = "<div class='wrap'><table>"
     html += "<tr class='h1'><th class='htime'>Time</th>"
+
     for s in strikes:
-        html += f"<th colspan='3' class='sep'>Strike {s}</th>"
+        atm_cls = "atm-head" if s == atm_int else ""
+        html += f"<th colspan='3' class='sep {atm_cls}'>Strike {s}</th>"
     html += "</tr>"
 
     html += "<tr class='h2'><th class='htime'></th>"
-    for _ in strikes:
-        html += "<th class='sep'>CALL OI</th><th>PUT OI</th><th class='diff-head'>DIFFERENCE<br><small>PUT-CALL</small></th>"
+    for s in strikes:
+        atm_cls = "atm-head" if s == atm_int else ""
+        html += f"<th class='sep {atm_cls}'>CALL OI</th>"
+        html += f"<th class='{atm_cls}'>PUT OI</th>"
+        html += f"<th class='diff-head {atm_cls}'>DIFFERENCE<br><small>PUT-CALL</small></th>"
     html += "</tr>"
 
     for i in range(len(data) - 1, -1, -1):
